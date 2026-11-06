@@ -15,14 +15,12 @@ directory with --classes (default: ../tools/build/cls relative to this repo).
 import argparse
 import os
 import pathlib
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
 
 JAVA_HOME_CANDIDATES = [
-    r"D:/Development/jdk17",
     os.environ.get("JAVA_HOME"),
 ]
 
@@ -68,6 +66,9 @@ def find_java() -> pathlib.Path:
         exe = pathlib.Path(base) / "bin" / ("javac.exe" if os.name == "nt" else "javac")
         if exe.exists():
             return pathlib.Path(base) / "bin"
+    fallback = shutil.which("javac")
+    if fallback:
+        return pathlib.Path(fallback).parent
     raise SystemExit("javac not found; set JAVA_HOME")
 
 

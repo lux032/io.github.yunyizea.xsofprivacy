@@ -20,6 +20,35 @@
 原 XSOF 有使用者实机生效反馈；本次 0.3.0 新增功能未经过真机注入、停止效果、
 采集变化、网络请求、耗电或长期稳定性验证。不能将编译和识别测试当作效果证明。
 
+## 本机补充验证（小米 15）
+
+环境：`24129PN74C` / `dada`，HyperOS `OS3.0.307.0.WOCCNXM`，Android 16，
+Zygisk Vector `2.2`（3080 / API 102），KernelSU SukiSU Ultra `4.3.0-r2`。
+手机管家 `12.8.1-260816.0.1`（`40001281`），GuardProvider `3.0.7-20260708.0`，
+SystemHelper `4.0.0-20260610`（34）。
+
+三个作用域均已实机注入，跳过 0 组：
+
+| 作用域 | 组 | hooks |
+|---|---:|---:|
+| `com.miui.securitycenter`（含 `.remote`、`:ui`） | 14 | 28 |
+| `com.mobiletools.systemhelper` | 10 | 11 |
+| `com.miui.guardprovider` | 1 | 1 |
+
+已观察到 `HIT` 的组：`listeners`、`storage.screenshot`、`storage.fraud_phone`、
+`provider.ingress`、`helper.receiver.SIMStateReceiver`、`helper.receiver.OnBootReceiver`。
+`guard.ai_detection` 与 `helper.encrypted_post` 尚未观察到 `HIT`。
+
+对应数据库侧观察：`/data/misc/user/0/securitycenter/fraud_detection_data.db` 的
+`screenshot`、`fraud_phone`、`screen_share`、`voip_record` 四表在模块生效后保持 0 行，
+文件修改时间停在启用之前。此行数结论只覆盖该库，不代表其他存储位置或上传通道。
+
+`SystemHelper 4.0.0` 的 `helper.encrypted_post` 识别规则已调整，原因与验证过程见
+[README 版本适配说明](README.md#版本适配说明本分支)。
+
+真机验证局限：未做停用模块的对照实验；未抓包确认上报是否实际发生；
+未验证 GuardProvider 在真实通话场景下的行为；未覆盖 clone 用户（user 999）。
+
 安装包沿用之前实验签名，使用 AAPT2+D8+apksig 直接构建；Gradle 未完整执行。
 输入 APK 的信息、证据和行为边界见 docs/extended-analysis.md。
 

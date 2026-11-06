@@ -19,15 +19,30 @@
 
 | 项目 | 已反馈的测试环境 |
 |---|---|
-| 设备 | Xiaomi 14 / 小米 14 |
-| 系统版本 | `3.0.307.0.WNCCNXM.C11`，国行 HyperOS |
-| Android | 16 |
-| 手机管家 | `12.8.7-260927.0.1` |
-| 手机管家 versionCode | `40001287` |
-| 测试反馈 | 模块实机验证有效 |
-| LSPosed | 使用者提供版本 `2.2.1 (7912)`，分支名称未提供 |
+| 设备 | Xiaomi 15 / 小米 15（`24129PN74C` / `dada`） |
+| 系统版本 | `OS3.0.307.0.WOCCNXM`，国行 HyperOS 3 |
+| Android | 16，安全补丁 `2026-08-01` |
+| 手机管家 | `12.8.1-260816.0.1` |
+| 手机管家 versionCode | `40001281` |
+| GuardProvider | `3.0.7-20260708.0` |
+| SystemHelper | `4.0.0-20260610` |
+| 测试反馈 | 三个作用域均已实机注入并产生 `HIT` |
+| Root 方案 | KernelSU（SukiSU Ultra `4.3.0-r2`），LKM 补丁 `init_boot` |
+| LSPosed | Zygisk Vector `2.2`（versionCode `3080`，API `102`） |
 
 上述为已反馈的设备环境和生效结果，不代表所有功能、第三方应用兼容性和长期稳定性均已逐项验证。其他机型、系统区域和手机管家版本仍需自行检查日志与实际行为。
+
+### 本机实测结果
+
+| 作用域 | 识别结果 | 已观察到的 `HIT` |
+|---|---|---|
+| `com.miui.securitycenter` | 14 组 / 28 hooks，零跳过 | `listeners`、`storage.fraud_phone`、`storage.screenshot`、`provider.ingress` |
+| `com.mobiletools.systemhelper` | 10 组 / 11 hooks，零跳过 | `helper.receiver.SIMStateReceiver`、`helper.receiver.OnBootReceiver` |
+| `com.miui.guardprovider` | 1 组 / 1 hook，零跳过 | 尚未触发 |
+
+手机管家 `12.8.1` 与已分析的 `12.8.7` 哈希不同，走特征识别路径（`ADAPTIVE_UNVERIFIED`），14 个功能组全部匹配成功。
+
+Web 环境版本差异导致的功能组调整见下文「版本适配说明」。
 
 ## 环境要求
 
@@ -199,6 +214,14 @@ Xposed API 由运行时框架提供，不打入模块 APK；DEX 解析所需依�
 
 现有预览 APK 使用 AAPT2、D8 和 apksig 直接工具链构建；Gradle 构建尚未完整执行验证。`resources.arsc` 的不压缩存储、4 字节对齐及 APK 签名已检查。
 
+若要把 SystemHelper 一类新版本跑一遍识别回归，可在主机端用模块自己的解析器直接检查，不需要刷入设备：
+
+```bash
+python tools/check_extended_resolver.py /path/to/systemhelper.apk com.mobiletools.systemhelper
+```
+
+脚本需要先用 javac 把 `app/src/main/java` 编到 `../tools/build/cls`，并确认 dexlib2 与 guava 位于 `../tools/libs`。任一功能组被跳过时以非零码退出，便于在 CI 里做门禁。APK 本身只被读取，不会执行。
+
 ## 测试
 
 除上述实机生效反馈外，项目包含主机端识别回归测试：
@@ -280,3 +303,75 @@ python tools/run_resolver_tests.py securitycenter-12.8.7.apk guardprovider-3.1.4
 ```
 
 0.3.0 新增功能尚未实机验证。原有实机反馈不能直接用于新增功能的效果结论。
+
+## 版本适配说明（本分支）
+
+本分支针对 `SystemHelper 4.0.0-20260610` 调整了 `helper.encrypted_post` 的识别方式，
+并在小米 15 / HyperOS `OS3.0.307.0.WOCCNXM` 上通过实机验证。
+
+### 问题
+
+原实现要求目标方法同时包含精确字符串 `"register success!"`：
+
+```java
+&&n.text("register success!")
+```
+
+SystemHelper `4.0.0` 把该日志改为 `"HTTPS register success!"`，于是唯一不匹配的特征
+导致整组匹配失败，日志报 `SKIPPED helper.encrypted_post candidates=0`。其余 5 个特征
+（`HttpHelper`、`sendHttpRequest() path = `、`application/encrypted-json`、
+`openConnection`、`getOutputStream`、`getResponseCode`）在 `4.0.0` 中均存在。
+
+### 同时发现的回流问题
+
+`e1/g.a()` 的控制流为「先试 HTTPS，失败后走明文 HTTP 兜底」：
+
+```text
+188: invoke g(url, body, key)      // HTTPS
+192: if-nez → 成功则退出
+194: f.c()                        // 查响应码；this.a 为 null 时抛异常
+     catch → 兜底分支
+312: f.f(url, body)               // HTTP 明文兜底 POST
+```
+
+只拦截 `g(...)` 并返回 false，会使控制流进入兜底分支，**反而触发明文上报**。
+因此现在同时拦截该类上所有符合条件的发送方法。
+
+### 调整后的匹配规则
+
+改为结构匹配，不再依赖单一日志字符串：
+
+- 锚定类需同时含 `HttpHelper`、`sendHttpRequest() path = `、`application/encrypted-json`。
+- 该类中返回 `Z`、参数含 `String` 与 `[B`、且调用 `openConnection` / `getOutputStream` /
+  `getResponseCode` 的方法全部纳入拦截。
+- 至少匹配到 2 个目标，否则整组继续跳过，不做猜测。
+
+### 验证结果
+
+```text
+离线（真实 4.0.0 DEX）：
+  INSTALLED helper.encrypted_post hooks=2
+        Lg1/f;->f(Ljava/lang/String;[B)Z    mode=FALSE
+        Lg1/f;->g(Ljava/lang/String;[B[B)Z   mode=FALSE
+  SUMMARY installedGroups=10 skipped=0
+
+实机（com.mobiletools.systemhelper）：
+  SUMMARY installedGroups=10 skippedOrFailedGroups=0 hooks=11
+```
+
+调整前为 9 组 / 9 hooks / 1 组跳过；调整后为 10 组 / 11 hooks / 0 跳过。
+手机管家 14 组与 GuardProvider 1 组的识别结果未受影响。
+
+`helper.encrypted_post` 目前只确认 Hook 已注册，尚未观察到该组的 `HIT`。
+运营商上报路径是否被真正阻断，需要等实际触发后检查日志，不能仅凭 `INSTALLED` 判定。
+
+### 本地构建须知
+
+Xposed API 必须保持 `compileOnly` 语义，**不能打进模块 APK**。若把 `de.robv.android.xposed`
+的类编译进 DEX，LSPosed 会拒绝加载并输出：
+
+```text
+Cannot load module: The Xposed API classes are compiled into the module's APK.
+```
+
+直接使用 D8 构建时，务必排除这些 class 文件，仅以 classpath 形式提供。

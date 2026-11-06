@@ -22,6 +22,12 @@ SystemHelper
 使用者环境：小米 14，HyperOS 3.0.307.0.WNCCNXM.C11，LSPosed 2.2.1 (7912)。
 新增 Hook 没有真机验证。
 
+本分支另在小米 15（`24129PN74C` / `dada`，HyperOS `OS3.0.307.0.WOCCNXM`，
+Zygisk Vector 2.2）上验证：GuardProvider `3.0.7-20260708.0` 经特征识别装上
+`guard.ai_detection`；SystemHelper `4.0.0-20260610` 装上 10 组、零跳过
+（原样本为 `3.0.1-20260313`，加密提交组的识别规则已调整，见 README）。
+两者均未观察到对应的 `HIT`，实际拦截效果尚未证实。
+
 ## GuardProvider
 
 `com.miui.guardprovider.aiguard.AiGuardService.onStartCommand(Intent,int,int)`
